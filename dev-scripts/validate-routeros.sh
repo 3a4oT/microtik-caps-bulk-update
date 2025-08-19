@@ -42,6 +42,13 @@ if grep -n '} *else{' "$SCRIPT_FILE" > /dev/null; then
     EXIT_CODE=1
 fi
 
+# 3. Check for boolean syntax errors  
+if grep -n 'disabled=false\|enabled=true\|disabled=true\|enabled=false' "$SCRIPT_FILE" > /dev/null; then
+    echo "❌ Error: RouterOS uses yes/no not true/false in queries"
+    grep -n 'disabled=false\|enabled=true\|disabled=true\|enabled=false' "$SCRIPT_FILE"
+    EXIT_CODE=1
+fi
+
 # 3. Check for :do without matching } on-error or } blocks
 DO_COUNT=$(echo "$CLEAN_SCRIPT" | grep -c ':do {' || true)
 ON_ERROR_COUNT=$(echo "$CLEAN_SCRIPT" | grep -c '} on-error=' || true)
