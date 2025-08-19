@@ -1,0 +1,30 @@
+name: RouterOS Script Syntax Check
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'dev-scripts/README.md'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'dev-scripts/README.md'
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Make scripts executable
+      run: |
+        chmod +x dev-scripts/*.sh
+        
+    - name: Validate RouterOS script syntax
+      run: |
+        echo "🔍 Running RouterOS syntax validation..."
+        ./dev-scripts/validate-routeros.sh cap-bulk-upgrade.rsc

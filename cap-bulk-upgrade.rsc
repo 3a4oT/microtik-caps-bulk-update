@@ -1,12 +1,13 @@
 # === CAPsMAN Bulk Upgrade (ac+ax, ROS >= 7.16) ===
-# - Checks who needs upgrade first (controller + CAPs)
-# - Only then checks disk space and downloads needed packages
-# - Upgrades only outdated CAPs (no needless reboots)
-# - Optional controller auto-reboot via flag
+# - Auto-detects available utilities (legacy caps-man + wifi capsman)
+# - Detects each CAP's architecture (ARM/ARM64) from board/model
+# - Downloads only needed packages for detected architectures
+# - Upgrades only outdated CAPs automatically (safe self-reboot)
+# - Controller upgrade requires manual reboot (shows commands in summary)
 # - Cleans up .npk files after CAPs fetch them
 
 # ---------------- USER SETTINGS ----------------
-:local minFreePerPkgBytes 15000000   ;# ~15 MiB/package safety estimate
+:local minFreePerPkgBytes 14000000    ;# ~14 MiB/package safety estimate (base=12MB + buffer for compression/temp)
 :local cleanupDelay "120s"           ;# wait before removing .npk files
 # ------------------------------------------------
 
@@ -80,7 +81,7 @@
 # Controller check
 :if ($cur != $latest) do={ :set needUpgrade true }
 
-# Legacy CAPS (ac, ARM) - only if legacy caps-man exists
+# Legacy CAPS (ac, ARM) - check versions only
 :if ($hasLegacyCaps) do={
     :foreach c in=$capsLegacy do={
         :local v  [/caps-man remote-cap get $c version]
@@ -97,7 +98,7 @@
     }
 }
 
-# New WiFi CAPS (ax, ARM64) - only if wifi capsman exists
+# New WiFi CAPS (ax, ARM64) - check versions only
 :if ($hasWifiCaps) do={
     :foreach c in=$capsWifi do={
         :local v  [/interface wifi capsman remote-cap get $c version]
@@ -122,8 +123,11 @@
 :if (!$needUpgrade) do={
     :put "cap-bulk-upgrade: all devices are already on latest; nothing to do."
     :log info "cap-bulk-upgrade: all devices are already on latest; nothing to do."
+    :put "Press Enter to exit"
     :return
 }
+
+
 
 # 4) Decide which package files are needed (version-first filenames)
 :local baseArm   ("routeros-" . $latest . "-arm.npk")
