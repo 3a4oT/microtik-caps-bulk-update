@@ -1,12 +1,13 @@
 # === CAPsMAN Bulk Upgrade (ac+ax, ROS >= 7.16) ===
-# - Checks who needs upgrade first (controller + CAPs)
-# - Only then checks disk space and downloads needed packages
-# - Upgrades only outdated CAPs (no needless reboots)
-# - Optional controller auto-reboot via flag
+# - Auto-detects available utilities (legacy caps-man + wifi capsman)
+# - Detects each CAP's architecture (ARM/ARM64) from board/model
+# - Downloads only needed packages for detected architectures
+# - Upgrades only outdated CAPs automatically (safe self-reboot)
+# - Controller upgrade requires manual reboot (shows commands in summary)
 # - Cleans up .npk files after CAPs fetch them
 
 # ---------------- USER SETTINGS ----------------
-:local minFreePerPkgBytes 15000000   ;# ~15 MiB/package safety estimate
+:local minFreePerPkgBytes 14000000    ;# ~14 MiB/package safety estimate (base=12MB + buffer for compression/temp)
 :local cleanupDelay "120s"           ;# wait before removing .npk files
 # ------------------------------------------------
 
