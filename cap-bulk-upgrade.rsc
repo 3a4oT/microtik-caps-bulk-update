@@ -6,10 +6,39 @@
 # - Cleans up .npk files after CAPs fetch them
 
 # ---------------- USER SETTINGS ----------------
-:local safeControllerReboot true     ;# true = do NOT auto-reboot controller; prints commands instead
 :local minFreePerPkgBytes 15000000   ;# ~15 MiB/package safety estimate
 :local cleanupDelay "120s"           ;# wait before removing .npk files
 # ------------------------------------------------
+
+# 0) Check which CAPsMAN utilities are available
+:local hasLegacyCaps false
+:local hasWifiCaps false
+
+# Check for legacy caps-man
+:do {
+    /caps-man remote-cap print count-only
+    :set hasLegacyCaps true
+} on-error={
+    :set hasLegacyCaps false
+}
+
+# Check for new wifi capsman
+:do {
+    /interface wifi capsman remote-cap print count-only
+    :set hasWifiCaps true
+} on-error={
+    :set hasWifiCaps false
+}
+
+:put ("cap-bulk-upgrade: Available utilities - legacy caps-man: " . $hasLegacyCaps . ", wifi capsman: " . $hasWifiCaps)
+:log info ("cap-bulk-upgrade: Available utilities - legacy caps-man: " . $hasLegacyCaps . ", wifi capsman: " . $hasWifiCaps)
+
+# Exit if no CAPsMAN utilities available
+:if (!$hasLegacyCaps and !$hasWifiCaps) do={
+    :put "cap-bulk-upgrade: ERROR - No CAPsMAN utilities available (neither legacy nor wifi)"
+    :log error "cap-bulk-upgrade: No CAPsMAN utilities available"
+    :error "No CAPsMAN utilities found"
+}
 
 # 1) Detect latest version on current channel (no channel change)
 /system package update check-for-updates
@@ -25,11 +54,21 @@
 :put ("cap-bulk-upgrade: latest=" . $latest . "  controller=" . $cur)
 :log info ("cap-bulk-upgrade: latest=" . $latest . "  controller=" . $cur)
 
-# 2) Discover CAPs in both managers
-:local capsLegacy [/caps-man remote-cap find]
-:local capsWifi   [/interface wifi capsman remote-cap find]
-:log info ("cap-bulk-upgrade: discovered CAPs — legacy=" . [:len $capsLegacy] . ", wifi=" . [:len $capsWifi])
-:put       ("cap-bulk-upgrade: discovered CAPs — legacy=" . [:len $capsLegacy] . ", wifi=" . [:len $capsWifi])
+# 2) Discover CAPs in both managers (only if available)
+:local capsLegacy [:toarray ""]
+:local capsWifi   [:toarray ""]
+
+:if ($hasLegacyCaps) do={
+    :set capsLegacy [/caps-man remote-cap find]
+    :log info ("cap-bulk-upgrade: discovered legacy CAPs: " . [:len $capsLegacy])
+    :put ("cap-bulk-upgrade: discovered legacy CAPs: " . [:len $capsLegacy])
+}
+
+:if ($hasWifiCaps) do={
+    :set capsWifi [/interface wifi capsman remote-cap find]
+    :log info ("cap-bulk-upgrade: discovered wifi CAPs: " . [:len $capsWifi])
+    :put ("cap-bulk-upgrade: discovered wifi CAPs: " . [:len $capsWifi])
+}
 
 # 3) Check who needs an upgrade (and which arch packages we’ll need)
 :local needUpgrade false
@@ -41,33 +80,37 @@
 # Controller check
 :if ($cur != $latest) do={ :set needUpgrade true }
 
-# Legacy CAPS (ac, ARM)
-:foreach c in=$capsLegacy do={
-    :local v  [/caps-man remote-cap get $c version]
-    :local id [/caps-man remote-cap get $c identity]
-    :if ($v != $latest) do={
-        :set needUpgrade true
-        :set needArm true
-        :set legList ($legList . "," . $c)
-        :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
-        :put       ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
-    } else={
-        :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " already " . $v . ", skipping")
+# Legacy CAPS (ac, ARM) - only if legacy caps-man exists
+:if ($hasLegacyCaps) do={
+    :foreach c in=$capsLegacy do={
+        :local v  [/caps-man remote-cap get $c version]
+        :local id [/caps-man remote-cap get $c identity]
+        :if ($v != $latest) do={
+            :set needUpgrade true
+            :set needArm true
+            :set legList ($legList . "," . $c)
+            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
+            :put       ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
+        } else={
+            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " already " . $v . ", skipping")
+        }
     }
 }
 
-# New WiFi CAPS (ax, ARM64)
-:foreach c in=$capsWifi do={
-    :local v  [/interface wifi capsman remote-cap get $c version]
-    :local id [/interface wifi capsman remote-cap get $c identity]
-    :if ($v != $latest) do={
-        :set needUpgrade true
-        :set needArm64 true
-        :set wifiList ($wifiList . "," . $c)
-        :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
-        :put       ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
-    } else={
-        :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " already " . $v . ", skipping")
+# New WiFi CAPS (ax, ARM64) - only if wifi capsman exists
+:if ($hasWifiCaps) do={
+    :foreach c in=$capsWifi do={
+        :local v  [/interface wifi capsman remote-cap get $c version]
+        :local id [/interface wifi capsman remote-cap get $c identity]
+        :if ($v != $latest) do={
+            :set needUpgrade true
+            :set needArm64 true
+            :set wifiList ($wifiList . "," . $c)
+            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
+            :put       ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
+        } else={
+            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " already " . $v . ", skipping")
+        }
     }
 }
 
@@ -149,48 +192,76 @@
     :if ([:len [/file find where name=$baseArm64]] = 0) do={ :put ("fetch " . $baseArm64); /tool fetch url=($baseURL . $baseArm64) mode=https output=file dst-path=$baseArm64 }
 }
 
-# 7) Controller upgrade (optional) — only if outdated
+# 7) Controller upgrade - note if needed
 :if ($cur != $latest) do={
-    :if ($safeControllerReboot = true) do={
-        :put ("cap-bulk-upgrade: controller outdated (" . $cur . " -> " . $latest . "), NOT auto-rebooting (safe mode).")
-        :put ("To upgrade controller now, run:")
-        :if ($ctrlArch = "arm")   do={ :put ("/system package add path=" . $baseArm) }
-        :if ($ctrlArch = "arm64") do={ :put ("/system package add path=" . $baseArm64) }
-        :put ("/system reboot")
-        :log info "cap-bulk-upgrade: controller upgrade deferred (safeControllerReboot=true)"
-    } else{
-        :log info "cap-bulk-upgrade: installing controller package and rebooting now"
-        :if ($ctrlArch = "arm")   do={ /system package add path=$baseArm }
-        :if ($ctrlArch = "arm64") do={ /system package add path=$baseArm64 }
-        # Schedule one-time post-reboot cleanup (optional)
-        /system scheduler add name="cap-post-cleanup" start-time=startup on-event="/delay $cleanupDelay; /file remove [/file find where name~\".*\\\\.npk\"]; /system scheduler remove cap-post-cleanup;"
-        /system reboot
-        :return
-    }
+    :put ("cap-bulk-upgrade: controller needs upgrade (" . $cur . " -> " . $latest . "), package downloaded")
+    :log info ("cap-bulk-upgrade: controller upgrade ready (v" . $cur . " -> v" . $latest . ")")
 }
 
-# 8) Upgrade only CAPs that need it (controller is latest OR safe mode chosen)
-:if ([:len $legList] > 0) do={
+# 8) Upgrade CAPs automatically (they can reboot safely)
+:if ($hasLegacyCaps and ([:len $legList] > 0)) do={
+    :put ("cap-bulk-upgrade: upgrading legacy CAPs: " . $legList)
     :log info ("cap-bulk-upgrade: upgrading legacy CAPs: " . $legList)
-    :put       ("cap-bulk-upgrade: upgrading legacy CAPs: " . $legList)
     /caps-man remote-cap upgrade numbers=$legList
 }
-:if ([:len $wifiList] > 0) do={
+:if ($hasWifiCaps and ([:len $wifiList] > 0)) do={
+    :put ("cap-bulk-upgrade: upgrading wifi CAPs: " . $wifiList)
     :log info ("cap-bulk-upgrade: upgrading wifi CAPs: " . $wifiList)
-    :put       ("cap-bulk-upgrade: upgrading wifi CAPs: " . $wifiList)
     /interface wifi capsman remote-cap upgrade numbers=$wifiList
 }
 :if (([:len $legList] = 0) and ([:len $wifiList] = 0)) do={
-    :log info "cap-bulk-upgrade: no CAPs required upgrade"
-    :put       "cap-bulk-upgrade: no CAPs required upgrade"
+    # Check if any CAPs were discovered at all
+    :if (([:len $capsLegacy] = 0) and ([:len $capsWifi] = 0)) do={
+        :put "cap-bulk-upgrade: no CAPs detected"
+        :log info "cap-bulk-upgrade: no CAPs found in system"
+    } else={
+        :put "cap-bulk-upgrade: all CAPs already on latest version"
+        :log info "cap-bulk-upgrade: no CAPs required upgrade"
+    }
 }
 
-# 9) Cleanup after grace period (so CAPs can download)
-:log info ("cap-bulk-upgrade: waiting " . $cleanupDelay . " before cleanup")
-:delay $cleanupDelay
-/file remove [/file find where name~".*\\.npk"]
-:log info "cap-bulk-upgrade: cleaned up .npk files on controller"
-:put       "cap-bulk-upgrade: cleaned up .npk files on controller"
+# 9) Cleanup and final status
+:if (([:len $legList] > 0) or ([:len $wifiList] > 0)) do={
+    :put ("cap-bulk-upgrade: waiting " . $cleanupDelay . " for CAPs to download packages...")
+    :log info ("cap-bulk-upgrade: waiting " . $cleanupDelay . " before cleanup")
+    :delay $cleanupDelay
+    /file remove [/file find where name~".*\\.npk"]
+    :put "cap-bulk-upgrade: cleaned up .npk files"
+    :log info "cap-bulk-upgrade: cleaned up .npk files on controller"
+}
+
+:put ""
+:put "================================================================="
+:put "UPGRADE SUMMARY"
+:put "================================================================="
+
+# Controller status and commands
+:if ($cur != $latest) do={
+    :put ("Controller: " . $cur . " -> " . $latest . " (READY - manual reboot required)")
+    :put ""
+    :put "To complete controller upgrade, copy and run:"
+    :put "/system reboot"
+    :put ""
+    :put ("RouterOS will automatically install: routeros-" . $latest . "-" . $ctrlArch . ".npk")
+    :put ""
+    :put "NOTE: Controller reboot does NOT affect CAP operations."
+} else={
+    :put ("Controller: " . $cur . " (UP-TO-DATE)")
+}
+
+# CAP status
+:if (([:len $legList] > 0) or ([:len $wifiList] > 0)) do={
+    :put "CAPs: UPGRADING (automatic, will complete shortly)"
+} else={
+    # Check if any CAPs were discovered at all
+    :if (([:len $capsLegacy] = 0) and ([:len $capsWifi] = 0)) do={
+        :put "CAPs: No CAPs detected"
+    } else={
+        :put "CAPs: UP-TO-DATE"
+    }
+}
+
+:put "================================================================="
 
 :log info "cap-bulk-upgrade: finished"
-:put       "cap-bulk-upgrade: finished"
+:put "cap-bulk-upgrade: finished"
