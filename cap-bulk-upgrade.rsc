@@ -81,68 +81,36 @@
 # Controller check
 :if ($cur != $latest) do={ :set needUpgrade true }
 
-# Legacy CAPS - detect actual architecture per CAP
+# Legacy CAPS (ac, ARM) - check versions only
 :if ($hasLegacyCaps) do={
     :foreach c in=$capsLegacy do={
         :local v  [/caps-man remote-cap get $c version]
         :local id [/caps-man remote-cap get $c identity]
-        
-        # Try to get board name with error handling
-        :local board "unknown"
-        :do {
-            :set board [/caps-man remote-cap get $c board]
-        } on-error={
-            :set board [/caps-man remote-cap get $c model]
-        }
-        
-        # Determine architecture from board name
-        :local arch "arm"  ;# default for legacy
-        # ARM64 boards: RB5009, hAP ax series, etc.
-        :if ($board~"RB5009" or $board~"ax" or $board~"AX" or $board~"RB4011" or $board~"RB3011") do={ :set arch "arm64" }
-        
         :if ($v != $latest) do={
             :set needUpgrade true
-            :if ($arch = "arm") do={ :set needArm true }
-            :if ($arch = "arm64") do={ :set needArm64 true }
+            :set needArm true
             :set legList ($legList . "," . $c)
-            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " [" . $board . "/" . $arch . "] needs " . $v . " -> " . $latest)
-            :put       ("cap-bulk-upgrade: CAP (legacy) " . $id . " [" . $board . "/" . $arch . "] needs " . $v . " -> " . $latest)
+            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
+            :put       ("cap-bulk-upgrade: CAP (legacy) " . $id . " needs " . $v . " -> " . $latest)
         } else={
-            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " [" . $board . "/" . $arch . "] already " . $v . ", skipping")
+            :log info ("cap-bulk-upgrade: CAP (legacy) " . $id . " already " . $v . ", skipping")
         }
     }
 }
 
-# New WiFi CAPS - detect actual architecture per CAP  
+# New WiFi CAPS (ax, ARM64) - check versions only
 :if ($hasWifiCaps) do={
     :foreach c in=$capsWifi do={
         :local v  [/interface wifi capsman remote-cap get $c version]
         :local id [/interface wifi capsman remote-cap get $c identity]
-        
-        # Try to get board name with error handling
-        :local board "unknown"
-        :do {
-            :set board [/interface wifi capsman remote-cap get $c board]
-        } on-error={
-            :set board [/interface wifi capsman remote-cap get $c model]
-        }
-        
-        # Determine architecture from board name
-        :local arch "arm64"  ;# default for wifi (ax devices)
-        # ARM boards: older AC devices, some special cases
-        :if ($board~"hAP" and !($board~"ax" or $board~"AX")) do={ :set arch "arm" }
-        :if ($board~"cAP" and !($board~"ax" or $board~"AX")) do={ :set arch "arm" }
-        :if ($board~"wAP" or $board~"RBwAP") do={ :set arch "arm" }
-        
         :if ($v != $latest) do={
             :set needUpgrade true
-            :if ($arch = "arm") do={ :set needArm true }
-            :if ($arch = "arm64") do={ :set needArm64 true }
+            :set needArm64 true
             :set wifiList ($wifiList . "," . $c)
-            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " [" . $board . "/" . $arch . "] needs " . $v . " -> " . $latest)
-            :put       ("cap-bulk-upgrade: CAP (wifi) " . $id . " [" . $board . "/" . $arch . "] needs " . $v . " -> " . $latest)
+            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
+            :put       ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
         } else={
-            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " [" . $board . "/" . $arch . "] already " . $v . ", skipping")
+            :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " already " . $v . ", skipping")
         }
     }
 }
@@ -155,8 +123,11 @@
 :if (!$needUpgrade) do={
     :put "cap-bulk-upgrade: all devices are already on latest; nothing to do."
     :log info "cap-bulk-upgrade: all devices are already on latest; nothing to do."
+    :put "Press Enter to exit"
     :return
 }
+
+
 
 # 4) Decide which package files are needed (version-first filenames)
 :local baseArm   ("routeros-" . $latest . "-arm.npk")
