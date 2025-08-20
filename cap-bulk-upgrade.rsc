@@ -139,77 +139,239 @@
 
 
 
-# 4) Decide which package files are needed (version-first filenames)
-:local baseArm   ("routeros-" . $latest . "-arm.npk")
-:local baseArm64 ("routeros-" . $latest . "-arm64.npk")
-:local wifiAcArm   ("wifi-qcom-ac-" . $latest . "-arm.npk")    ;# ac (wave2)
-:local wirelessArm ("wireless-"     . $latest . "-arm.npk")    ;# legacy fallback for ac
-:local wifiAxArm64 ("wifi-qcom-"    . $latest . "-arm64.npk")  ;# ax
-:local caleaArm    ("calea-"        . $latest . "-arm.npk")
-:local caleaArm64  ("calea-"        . $latest . "-arm64.npk")
+# 4) Note: Package detection moved after upgrade decision
 
-# Controller packages (if controller is outdated)
+# Controller upgrade flags (separate from CAP architecture needs)
 :local ctrlArch [/system resource get architecture-name]
 :local needCtrlArm false
 :local needCtrlArm64 false
 :if ($cur != $latest) do={
-    :if ($ctrlArch = "arm") do={ 
-        :set needCtrlArm true
-        :set needArm true  ;# controller needs WiFi packages too
+    :if ($ctrlArch = "arm") do={ :set needCtrlArm true }
+    :if ($ctrlArch = "arm64") do={ :set needCtrlArm64 true }
+}
+
+# 5) Detect controller's installed packages (for download decisions)
+:local pkgList ""
+:if ($needArm or $needArm64 or $needCtrlArm or $needCtrlArm64) do={
+    # Detect controller's installed packages (only when downloads needed)
+    :local installedPkgs [/system package find where disabled=no]
+    :foreach pkg in=$installedPkgs do={
+        :local pkgName [/system package get $pkg name]
+        :if ($pkgName != "routeros") do={
+            :set pkgList ($pkgList . "," . $pkgName)
+        }
     }
-    :if ($ctrlArch = "arm64") do={ 
-        :set needCtrlArm64 true
-        :set needArm64 true  ;# controller needs WiFi packages too
+    # Clean package list
+    :if (([:len $pkgList] > 0) and ([:pick $pkgList 0 1] = ",")) do={ :set pkgList [:pick $pkgList 1 [:len $pkgList]] }
+    
+    :put ("cap-bulk-upgrade: controller packages detected: " . $pkgList)
+    :log info ("cap-bulk-upgrade: controller packages detected: " . $pkgList)
+    
+    # Preview what will be downloaded
+    :put ""
+    :put "================================================================="
+    :put "DOWNLOAD PREVIEW"
+    :put "================================================================="
+    
+    # Show ARM packages if needed
+    :if ($needArm or ($needCtrlArm and !$needArm64)) do={
+        :put "ARM packages to download:"
+        :local baseFile ("routeros-" . $latest . "-arm.npk")
+        :if ([:len [/file find where name=$baseFile]] = 0) do={ :put ("  - " . $baseFile) }
+        :if ([:len $pkgList] > 0) do={
+            :local remaining $pkgList
+            :while ([:len $remaining] > 0) do={
+                :local commaPos [:find $remaining ","]
+                :local pkgName ""
+                :if ($commaPos >= 0) do={
+                    :set pkgName [:pick $remaining 0 $commaPos]
+                    :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+                } else={
+                    :set pkgName $remaining
+                    :set remaining ""
+                }
+                :if ([:len $pkgName] > 0) do={
+                    :local pkgFile ($pkgName . "-" . $latest . "-arm.npk")
+                    :if ([:len [/file find where name=$pkgFile]] = 0) do={ :put ("  - " . $pkgFile) }
+                }
+            }
+        }
     }
+    
+    # Show ARM64 packages if needed
+    :if ($needArm64 or ($needCtrlArm64 and !$needArm)) do={
+        :put "ARM64 packages to download:"
+        :local baseFile ("routeros-" . $latest . "-arm64.npk")
+        :if ([:len [/file find where name=$baseFile]] = 0) do={ :put ("  - " . $baseFile) }
+        :if ([:len $pkgList] > 0) do={
+            :local remaining $pkgList
+            :while ([:len $remaining] > 0) do={
+                :local commaPos [:find $remaining ","]
+                :local pkgName ""
+                :if ($commaPos >= 0) do={
+                    :set pkgName [:pick $remaining 0 $commaPos]
+                    :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+                } else={
+                    :set pkgName $remaining
+                    :set remaining ""
+                }
+                :if ([:len $pkgName] > 0) do={
+                    :local pkgFile ($pkgName . "-" . $latest . "-arm64.npk")
+                    :if ([:len [/file find where name=$pkgFile]] = 0) do={ :put ("  - " . $pkgFile) }
+                }
+            }
+        }
+    }
+    :put "================================================================="
+    :put ""
+} else={
+    :put "cap-bulk-upgrade: no downloads needed, skipping package detection"
+    :return
 }
 
-# 5) Disk space estimate BEFORE any download (count only missing files)
-:local pkgCount 0
-:if ($needArm) do={
-    :if ([:len [/file find where name=$baseArm]]   = 0) do={ :set pkgCount ($pkgCount + 1) }
-    :if ([:len [/file find where name=$wifiAcArm]] = 0) do={ :set pkgCount ($pkgCount + 1) }
-    :if ([:len [/file find where name=$wirelessArm]] = 0) do={ :set pkgCount ($pkgCount + 1) }
-    :if ([:len [/file find where name=$caleaArm]]  = 0) do={ :set pkgCount ($pkgCount + 1) }
-}
-:if ($needArm64) do={
-    :if ([:len [/file find where name=$baseArm64]]   = 0) do={ :set pkgCount ($pkgCount + 1) }
-    :if ([:len [/file find where name=$wifiAxArm64]] = 0) do={ :set pkgCount ($pkgCount + 1) }
-    :if ([:len [/file find where name=$caleaArm64]]  = 0) do={ :set pkgCount ($pkgCount + 1) }
-}
-:if ($needCtrlArm and !$needArm) do={
-    :if ([:len [/file find where name=$baseArm]]   = 0) do={ :set pkgCount ($pkgCount + 1) }
-}
-:if ($needCtrlArm64 and !$needArm64) do={
-    :if ([:len [/file find where name=$baseArm64]] = 0) do={ :set pkgCount ($pkgCount + 1) }
-}
-
-:local needBytes ($pkgCount * $minFreePerPkgBytes)
-:local freeBytes [/system resource get free-hdd-space]
-:if ($freeBytes < $needBytes) do={
-    :put ("cap-bulk-upgrade: insufficient space — available " . ($freeBytes / 1048576) . " MiB, need at least " . ($needBytes / 1048576) . " MiB for ~" . $pkgCount . " package(s). Free space and re-run.")
-    :log error ("cap-bulk-upgrade: insufficient space (" . ($freeBytes / 1048576) . " MiB < " . ($needBytes / 1048576) . " MiB)")
-    :error "insufficient space"
-}
-
-# 6) Fetch only missing packages
+# 6) Fetch packages only for devices that need upgrading
 :local baseURL ("https://download.mikrotik.com/routeros/" . $latest . "/")
 
+# Download ARM packages only if ARM CAPs need upgrade
 :if ($needArm) do={
-    :if ([:len [/file find where name=$baseArm]]   = 0) do={ :put ("fetch " . $baseArm);   /tool fetch url=($baseURL . $baseArm)   mode=https output=file dst-path=$baseArm }
-    :if ([:len [/file find where name=$wifiAcArm]] = 0) do={ :put ("fetch " . $wifiAcArm); /tool fetch url=($baseURL . $wifiAcArm) mode=https output=file dst-path=$wifiAcArm }
-    :if ([:len [/file find where name=$wirelessArm]] = 0) do={ :put ("fetch " . $wirelessArm); /tool fetch url=($baseURL . $wirelessArm) mode=https output=file dst-path=$wirelessArm }
-    :if ([:len [/file find where name=$caleaArm]]  = 0) do={ :put ("fetch " . $caleaArm);  /tool fetch url=($baseURL . $caleaArm)  mode=https output=file dst-path=$caleaArm }
+    :put "cap-bulk-upgrade: downloading arm packages (ARM CAPs need upgrade)"
+    :local baseFile ("routeros-" . $latest . "-arm.npk")
+    :if ([:len [/file find where name=$baseFile]] = 0) do={ 
+        :put ("fetch " . $baseFile)
+        /tool fetch url=($baseURL . $baseFile) mode=https output=file dst-path=$baseFile
+    }
+    # Download controller's packages for ARM architecture
+    :if ([:len $pkgList] > 0) do={
+        :local remaining $pkgList
+        :while ([:len $remaining] > 0) do={
+            :local commaPos [:find $remaining ","]
+            :local pkgName ""
+            :if ($commaPos >= 0) do={
+                :set pkgName [:pick $remaining 0 $commaPos]
+                :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+            } else={
+                :set pkgName $remaining
+                :set remaining ""
+            }
+            :if ([:len $pkgName] > 0) do={
+                :local pkgFile ($pkgName . "-" . $latest . "-arm.npk")
+                :if ([:len [/file find where name=$pkgFile]] = 0) do={
+                    :put ("fetch " . $pkgFile)
+                    :do {
+                        /tool fetch url=($baseURL . $pkgFile) mode=https output=file dst-path=$pkgFile
+                    } on-error={
+                        :log warning ("cap-bulk-upgrade: failed to download " . $pkgFile . " (might not exist)")
+                    }
+                }
+            }
+        }
+    }
 }
+
+# Download ARM64 packages only if ARM64 CAPs need upgrade  
 :if ($needArm64) do={
-    :if ([:len [/file find where name=$baseArm64]]   = 0) do={ :put ("fetch " . $baseArm64);   /tool fetch url=($baseURL . $baseArm64)   mode=https output=file dst-path=$baseArm64 }
-    :if ([:len [/file find where name=$wifiAxArm64]] = 0) do={ :put ("fetch " . $wifiAxArm64); /tool fetch url=($baseURL . $wifiAxArm64) mode=https output=file dst-path=$wifiAxArm64 }
-    :if ([:len [/file find where name=$caleaArm64]]  = 0) do={ :put ("fetch " . $caleaArm64);  /tool fetch url=($baseURL . $caleaArm64)  mode=https output=file dst-path=$caleaArm64 }
+    :put "cap-bulk-upgrade: downloading arm64 packages (ARM64 CAPs need upgrade)"
+    :local baseFile ("routeros-" . $latest . "-arm64.npk")
+    :if ([:len [/file find where name=$baseFile]] = 0) do={ 
+        :put ("fetch " . $baseFile)
+        /tool fetch url=($baseURL . $baseFile) mode=https output=file dst-path=$baseFile
+    }
+    # Download controller's packages for ARM64 architecture
+    :if ([:len $pkgList] > 0) do={
+        :local remaining $pkgList
+        :while ([:len $remaining] > 0) do={
+            :local commaPos [:find $remaining ","]
+            :local pkgName ""
+            :if ($commaPos >= 0) do={
+                :set pkgName [:pick $remaining 0 $commaPos]
+                :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+            } else={
+                :set pkgName $remaining
+                :set remaining ""
+            }
+            :if ([:len $pkgName] > 0) do={
+                :local pkgFile ($pkgName . "-" . $latest . "-arm64.npk")
+                :if ([:len [/file find where name=$pkgFile]] = 0) do={
+                    :put ("fetch " . $pkgFile)
+                    :do {
+                        /tool fetch url=($baseURL . $pkgFile) mode=https output=file dst-path=$pkgFile
+                    } on-error={
+                        :log warning ("cap-bulk-upgrade: failed to download " . $pkgFile . " (might not exist)")
+                    }
+                }
+            }
+        }
+    }
 }
+
+# Download controller packages only if controller needs upgrade (no CAP overlap)
 :if ($needCtrlArm and !$needArm) do={
-    :if ([:len [/file find where name=$baseArm]] = 0) do={ :put ("fetch " . $baseArm); /tool fetch url=($baseURL . $baseArm) mode=https output=file dst-path=$baseArm }
+    :put "cap-bulk-upgrade: downloading arm packages (controller only)"
+    :local baseFile ("routeros-" . $latest . "-arm.npk")
+    :if ([:len [/file find where name=$baseFile]] = 0) do={ 
+        :put ("fetch " . $baseFile)
+        /tool fetch url=($baseURL . $baseFile) mode=https output=file dst-path=$baseFile
+    }
+    # Download controller's packages for ARM architecture
+    :if ([:len $pkgList] > 0) do={
+        :local remaining $pkgList
+        :while ([:len $remaining] > 0) do={
+            :local commaPos [:find $remaining ","]
+            :local pkgName ""
+            :if ($commaPos >= 0) do={
+                :set pkgName [:pick $remaining 0 $commaPos]
+                :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+            } else={
+                :set pkgName $remaining
+                :set remaining ""
+            }
+            :if ([:len $pkgName] > 0) do={
+                :local pkgFile ($pkgName . "-" . $latest . "-arm.npk")
+                :if ([:len [/file find where name=$pkgFile]] = 0) do={
+                    :put ("fetch " . $pkgFile)
+                    :do {
+                        /tool fetch url=($baseURL . $pkgFile) mode=https output=file dst-path=$pkgFile
+                    } on-error={
+                        :log warning ("cap-bulk-upgrade: failed to download " . $pkgFile . " (might not exist)")
+                    }
+                }
+            }
+        }
+    }
 }
 :if ($needCtrlArm64 and !$needArm64) do={
-    :if ([:len [/file find where name=$baseArm64]] = 0) do={ :put ("fetch " . $baseArm64); /tool fetch url=($baseURL . $baseArm64) mode=https output=file dst-path=$baseArm64 }
+    :put "cap-bulk-upgrade: downloading arm64 packages (controller only)"
+    :local baseFile ("routeros-" . $latest . "-arm64.npk")
+    :if ([:len [/file find where name=$baseFile]] = 0) do={ 
+        :put ("fetch " . $baseFile)
+        /tool fetch url=($baseURL . $baseFile) mode=https output=file dst-path=$baseFile
+    }
+    # Download controller's packages for ARM64 architecture
+    :if ([:len $pkgList] > 0) do={
+        :local remaining $pkgList
+        :while ([:len $remaining] > 0) do={
+            :local commaPos [:find $remaining ","]
+            :local pkgName ""
+            :if ($commaPos >= 0) do={
+                :set pkgName [:pick $remaining 0 $commaPos]
+                :set remaining [:pick $remaining ($commaPos + 1) [:len $remaining]]
+            } else={
+                :set pkgName $remaining
+                :set remaining ""
+            }
+            :if ([:len $pkgName] > 0) do={
+                :local pkgFile ($pkgName . "-" . $latest . "-arm64.npk")
+                :if ([:len [/file find where name=$pkgFile]] = 0) do={
+                    :put ("fetch " . $pkgFile)
+                    :do {
+                        /tool fetch url=($baseURL . $pkgFile) mode=https output=file dst-path=$pkgFile
+                    } on-error={
+                        :log warning ("cap-bulk-upgrade: failed to download " . $pkgFile . " (might not exist)")
+                    }
+                }
+            }
+        }
+    }
 }
 
 # 7) Controller upgrade - note if needed
@@ -263,16 +425,7 @@
     :put "/system reboot"
     :put ""
     :put ("RouterOS will automatically install: routeros-" . $latest . "-" . $ctrlArch . ".npk")
-    :put ""
-    :put "DEBUGGING INFO:"
-    :local pkgFile ("routeros-" . $latest . "-" . $ctrlArch . ".npk")
-    :if ([:len [/file find where name=$pkgFile]] > 0) do={
-        :local fileSize [/file get [/file find where name=$pkgFile] size]
-        :put ("- Package file exists: " . $pkgFile . " (" . ($fileSize / 1048576) . " MiB)")
-        :put "- If reboot doesn't upgrade, check System > Log for package errors"
-    } else={
-        :put ("- ERROR: Package file missing: " . $pkgFile)
-    }
+
     :put ""
     :put "NOTE: Controller reboot does NOT affect CAP operations."
 } else={
