@@ -446,5 +446,15 @@
 
 :put "================================================================="
 
-:log info "cap-bulk-upgrade: finished"
 :put "cap-bulk-upgrade: finished"
+
+# Final reboot command (very last for easy copying)
+:if ($cur != $latest) do={
+    :put ""
+    :put ">>>>> TO COMPLETE CONTROLLER UPGRADE, COPY AND RUN: <<<<<"
+    :put ""
+    :put "/system reboot"
+    :put ""
+}
+
+:log info "cap-bulk-upgrade: finished"
