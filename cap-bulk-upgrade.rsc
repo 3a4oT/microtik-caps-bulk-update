@@ -98,14 +98,24 @@
     }
 }
 
-# New WiFi CAPS (ax, ARM64) - check versions only
+# New WiFi CAPS (ax/ac) - detect arch only if upgrade needed
 :if ($hasWifiCaps) do={
     :foreach c in=$capsWifi do={
         :local v  [/interface wifi capsman remote-cap get $c version]
         :local id [/interface wifi capsman remote-cap get $c identity]
         :if ($v != $latest) do={
             :set needUpgrade true
-            :set needArm64 true
+            :local board "unknown"
+            :do {
+                :set board [/interface wifi capsman remote-cap get $c board]
+            } on-error={
+                :set board [/interface wifi capsman remote-cap get $c model]
+            }
+            # Decide arch from board/model (safe heuristics)
+            :if ($board~"hAP" and !($board~"ax" or $board~"AX")) do={ :set needArm true }
+            :if ($board~"cAP" and !($board~"ax" or $board~"AX")) do={ :set needArm true }
+            :if ($board~"wAP" or $board~"RBwAP") do={ :set needArm true }
+            :if (!($board~"hAP" or $board~"cAP" or $board~"wAP")) do={ :set needArm64 true }
             :set wifiList ($wifiList . "," . $c)
             :log info ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
             :put       ("cap-bulk-upgrade: CAP (wifi) " . $id . " needs " . $v . " -> " . $latest)
@@ -138,13 +148,19 @@
 :local caleaArm    ("calea-"        . $latest . "-arm.npk")
 :local caleaArm64  ("calea-"        . $latest . "-arm64.npk")
 
-# Controller arch base package (if controller is outdated)
+# Controller packages (if controller is outdated)
 :local ctrlArch [/system resource get architecture-name]
 :local needCtrlArm false
 :local needCtrlArm64 false
 :if ($cur != $latest) do={
-    :if ($ctrlArch = "arm")   do={ :set needCtrlArm true }
-    :if ($ctrlArch = "arm64") do={ :set needCtrlArm64 true }
+    :if ($ctrlArch = "arm") do={ 
+        :set needCtrlArm true
+        :set needArm true  ;# controller needs WiFi packages too
+    }
+    :if ($ctrlArch = "arm64") do={ 
+        :set needCtrlArm64 true
+        :set needArm64 true  ;# controller needs WiFi packages too
+    }
 }
 
 # 5) Disk space estimate BEFORE any download (count only missing files)
@@ -247,6 +263,16 @@
     :put "/system reboot"
     :put ""
     :put ("RouterOS will automatically install: routeros-" . $latest . "-" . $ctrlArch . ".npk")
+    :put ""
+    :put "DEBUGGING INFO:"
+    :local pkgFile ("routeros-" . $latest . "-" . $ctrlArch . ".npk")
+    :if ([:len [/file find where name=$pkgFile]] > 0) do={
+        :local fileSize [/file get [/file find where name=$pkgFile] size]
+        :put ("- Package file exists: " . $pkgFile . " (" . ($fileSize / 1048576) . " MiB)")
+        :put "- If reboot doesn't upgrade, check System > Log for package errors"
+    } else={
+        :put ("- ERROR: Package file missing: " . $pkgFile)
+    }
     :put ""
     :put "NOTE: Controller reboot does NOT affect CAP operations."
 } else={
